@@ -1,23 +1,100 @@
 from app.neo4j_store import Neo4jStore
 
+
 def wallet_profile(store: Neo4jStore, address: str):
     address = address.lower()
     rows = store.query_records("""
     MATCH (w:Wallet {address: $address})
     CALL {
-        WITH w
-        OPTIONAL MATCH (w)-[:SENT]->(x:Transfer)
-        RETURN count(x) AS outgoing_events
+      WITH w
+      OPTIONAL MATCH (w)-[:SENT]->(x:Transfer)
+      RETURN count(x) AS outgoing_events
     }
     CALL {
-        WITH w
-        OPTIONAL MATCH (x:Transfer)-[:TO]->(w)
-        RETURN count(x) AS incoming_events
+      WITH w
+      OPTIONAL MATCH (x:Transfer)-[:TO]->(w)
+      RETURN count(x) AS incoming_events
     }
     RETURN w.address AS address, w.first_seen AS first_seen,
-            w.last_seen AS last_seen, outgoing_events, incoming_events
+           w.last_seen AS last_seen, outgoing_events, incoming_events
     """, address=address)
     return rows[0] if rows else {"address": address, "found": False}
+
+
+def wallet_transaction_counts(store: Neo4jStore, address: str):
+    """Count distinct Ethereum tx hashes and Transfer log events involving a wallet.
+
+    A transaction may emit several ERC-20 Transfer logs, so transaction counts
+    use DISTINCT tx_hash while event counts count individual Transfer nodes.
+    A self-transfer is counted once in total_transactions.
+    """
+    address = address.lower()
+    rows = store.query_records("""
+    MATCH (w:Wallet {address: $address})
+    CALL {
+      WITH w
+      OPTIONAL MATCH (w)-[:SENT]->(t:Transfer)
+      RETURN count(DISTINCT t.tx_hash) AS outgoing_transactions,
+             count(t) AS outgoing_transfer_events
+    }
+    CALL {
+      WITH w
+      OPTIONAL MATCH (t:Transfer)-[:TO]->(w)
+      RETURN count(DISTINCT t.tx_hash) AS incoming_transactions,
+             count(t) AS incoming_transfer_events
+    }
+    CALL {
+      WITH w
+      OPTIONAL MATCH (w)-[:SENT]->(sent:Transfer)
+      WITH w, collect(DISTINCT sent.tx_hash) AS outgoing_hashes
+      OPTIONAL MATCH (received:Transfer)-[:TO]->(w)
+      WITH outgoing_hashes, collect(DISTINCT received.tx_hash) AS incoming_hashes
+      RETURN size(
+        outgoing_hashes +
+        [h IN incoming_hashes
+         WHERE h IS NOT NULL AND NOT h IN outgoing_hashes]
+      ) AS total_transactions
+    }
+    RETURN w.address AS wallet_address,
+           total_transactions,
+           incoming_transactions,
+           outgoing_transactions,
+           incoming_transfer_events,
+           outgoing_transfer_events,
+           incoming_transfer_events + outgoing_transfer_events AS direction_event_sum
+    """, address=address)
+
+    if not rows:
+        return {
+            "wallet_address": address,
+            "found": False,
+            "total_transactions": 0,
+            "incoming_transactions": 0,
+            "outgoing_transactions": 0,
+            "incoming_transfer_events": 0,
+            "outgoing_transfer_events": 0,
+        }
+
+    result = rows[0]
+    result["found"] = True
+    # If the same Transfer node is a self-transfer, it is both incoming and
+    # outgoing. Count unique events for an additional unambiguous total.
+    event_rows = store.query_records("""
+    MATCH (w:Wallet {address: $address})
+    OPTIONAL MATCH (w)-[:SENT]->(sent:Transfer)
+    WITH w, collect(DISTINCT sent.event_id) AS sent_ids
+    OPTIONAL MATCH (received:Transfer)-[:TO]->(w)
+    WITH sent_ids, collect(DISTINCT received.event_id) AS received_ids
+    RETURN size(sent_ids + [id IN received_ids
+                            WHERE id IS NOT NULL AND NOT id IN sent_ids])
+           AS total_transfer_events
+    """, address=address)
+    result["total_transfer_events"] = (
+        event_rows[0]["total_transfer_events"] if event_rows else 0
+    )
+    result.pop("direction_event_sum", None)
+    return result
+
 
 def wallet_transfers(store: Neo4jStore, address: str, limit: int = 50):
     return store.query_records("""
@@ -33,6 +110,7 @@ def wallet_transfers(store: Neo4jStore, address: str, limit: int = 50):
     ORDER BY x.timestamp DESC LIMIT $limit
     """, address=address.lower(), limit=max(1, min(limit, 500)))
 
+
 def wallet_counterparties(store: Neo4jStore, address: str, limit: int = 50):
     return store.query_records("""
     MATCH (w:Wallet {address: $address})-[:SENT]->(x:Transfer)-[:TO]->(other:Wallet)
@@ -43,6 +121,7 @@ def wallet_counterparties(store: Neo4jStore, address: str, limit: int = 50):
     ORDER BY events DESC LIMIT $limit
     """, address=address.lower(), limit=max(1, min(limit, 200)))
 
+
 def top_tokens(store: Neo4jStore, limit: int = 20):
     return store.query_records("""
     MATCH (x:Transfer)-[:OF_TOKEN]->(t:Token)
@@ -50,6 +129,7 @@ def top_tokens(store: Neo4jStore, limit: int = 20):
            t.decimals AS decimals, count(x) AS transfer_events
     ORDER BY transfer_events DESC LIMIT $limit
     """, limit=max(1, min(limit, 100)))
+
 
 def wallet_paths(store: Neo4jStore, source: str, target: str, max_hops: int = 4):
     # Relationship pattern is fixed in Cypher; max_hops is tightly bounded.

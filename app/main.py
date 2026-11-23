@@ -2,7 +2,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 from app.neo4j_store import Neo4jStore
-from app.analytics import wallet_profile, wallet_transfers, wallet_counterparties, top_tokens, wallet_paths
+from app.analytics import (
+    wallet_profile, wallet_transfers, wallet_counterparties,
+    wallet_transaction_counts, top_tokens, wallet_paths,
+)
 # from app.fraud import wallet_risk
 from app.rag import GraphRAG
 
@@ -69,6 +72,12 @@ def get_wallet(address: str):
 @app.get("/wallet/{address}/transfers")
 def get_wallet_transfers(address: str, limit: int = Query(default=50, ge=1, le=500)):
     return wallet_transfers(store, address, limit)
+
+
+@app.get("/wallet/{address}/transaction-counts")
+def get_wallet_transaction_counts(address: str):
+    """Return exact unique transaction-hash and ERC-20 event counts."""
+    return wallet_transaction_counts(store, address)
 
 
 @app.get("/wallet/{address}/counterparties")

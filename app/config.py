@@ -23,7 +23,7 @@ NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
 # OpenRouter provides OpenAI-compatible chat and embeddings endpoints.
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-OPENROUTER_CHAT_MODEL = os.getenv("OPENROUTER_CHAT_MODEL", "qwen/qwen3.8-27b")
+OPENROUTER_CHAT_MODEL = os.getenv("OPENROUTER_CHAT_MODEL", "openai/gpt-4.1")
 # Keep text-embedding-3-small initially for compatibility with the existing
 # 1536-dimensional Neo4j vector index and any profiles already indexed with it.
 OPENROUTER_EMBEDDING_MODEL = os.getenv(
